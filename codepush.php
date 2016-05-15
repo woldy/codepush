@@ -36,18 +36,18 @@ class CodePush
 	function start($cmd){
 		if(empty($cmd)){
 			$this->output('usage: ','red');
-			echo "php codepush.php  push|back|log\n";
+			echo "php codepush.php  push|back|shell|log\n";
 		}else if($cmd=='push'){
 			$this->push();
 		}else if($cmd=='back'){
-			$x->back();
+			$this->back();
 		}else if($cmd=='log'){
 			$this->log();
 		}else if($cmd=='shell'){
-
+			$this->remote_shell();
 		}else{
 			$this->output('usage: ','red');
-			echo "php codepush.php  push|back|log\n";
+			echo "php codepush.php  push|back|shell|log\n";
 		}
 	}
 
@@ -334,15 +334,17 @@ class CodePush
 			// $this->warning($remotenewfile."\n");
 			// $this->warning($backfile."\n");
 
+
+
 			$this->tip("backuping remote file : $backfile...\n");
-			if(ssh2_sftp_lstat($this->sftp,$newfile)){
-				if(ssh2_sftp_rename($this->sftp,$newfile,$backfile)){
+			if(ssh2_sftp_lstat($this->sftp,$remotenewfile)){
+				if(ssh2_sftp_rename($this->sftp,$remotenewfile,$backfile)){
 					$this->success("backup remote file : $backfile done\n");
 				}else{
 					$this->warning("backup remote file : $backfile failed\n");
 				}
 			}else{
-				$this->success("remote file note need to backup: $backfile...\n");
+				$this->warning("remote file not need to backup: $remotenewfile...\n");
 			}
 
 			$this->tip("sending remote file : $remotenewfile...\n");
@@ -367,11 +369,99 @@ class CodePush
 	 * @return   [type]                   [description]
 	 */
 	public function back(){
-		$teskid=$this->input("please enter back taskid:");
+		$this->putlog('back');
+		$this->log('push');
+		$taskid=$this->taskid;
+
+		$backtaskid=$this->input("please enter back taskid:");
+		
+		if(isset($this->log[$backtaskid]) && $this->log[$backtaskid]['cmd']=='push'){
+			$this->config=json_decode($this->log[$backtaskid]['config'],true);
+			$this->taskid=$taskid;
+		}else{
+			$this->error("no have this taskid...\n");
+		}
+	
+		$server_list=$this->config['remote_server'];
+
+		if(empty($server_list)){
+			$this->error("please set remote server!\n");
+		}
+		foreach ($server_list as $server) {
+			$conn=$this->login($server);
+			if($conn){
+				$this->conn=$conn;
+				$this->sftp = ssh2_sftp($this->conn);
+				$this->checkConfig('remote');
+				$this->rollBack($backtaskid);
+			}
+		}
+		$this->success("task{$this->taskid}: all is done!\n");		
 	}
 
 
 
+	/**
+	 * 回滚
+	 * @Author   Woldy
+	 * @DateTime 2016-05-13T10:40:13+0800
+	 * @return   [type]                   [description]
+	 */
+	function rollBack($backtaskid){
+		$backuppath=$this->config['remote_backup_path'].'/task'.$backtaskid.'/';
+		$targetpath=$this->config['remote_path'];
+		$this->remote_exec("\cp -rf  $backuppath/*  $targetpath");
+		$this->success("rollback success! \n");
+	}
+
+	function remote_shell(){
+		$this->putlog('shell');
+		$server_list=$this->config['remote_server'];
+		
+		if(empty($server_list)){
+			$this->error("please set remote server!\n");
+		}
+		foreach ($server_list as $server) {
+			$conn=$this->login($server);
+			if($conn){
+				$this->conn=$conn;
+				//$this->sftp = ssh2_sftp($this->conn);
+				$cmd='';
+				while ($cmd!='quit') {
+					$cmd=$this->input(">");
+					if($cmd=='quit') return;
+					$this->remote_exec($cmd);
+				}
+			}
+		}
+		$this->success("task{$this->taskid}: all is done!\n");		
+	}
+
+
+	/**
+	 * 执行远程命令
+	 * @param  [type] $cmd [description]
+	 * @return [type]      [description]
+	 */
+	function remote_exec($cmd){
+		$stream=ssh2_exec($this->conn,$cmd);
+		stream_set_blocking($stream, true); 
+		$errorStream = ssh2_fetch_stream($stream, SSH2_STREAM_STDERR);
+		$success=stream_get_contents($stream);
+		$error=stream_get_contents($errorStream);
+		fclose($errorStream);
+		fclose($stream);
+		if(!empty($error)){
+			$this->warning($error."\n");
+			$this->YNgo('it seems some thing wrong..');
+		}else{
+			if(empty($success)){
+				return;
+			}else{
+				$this->success($success."\n");
+			}
+		}
+	}
 
 
 
@@ -383,7 +473,8 @@ class CodePush
 	 */
 	function login($server){
 		$conn = ssh2_connect($server['ip'],$server['port']); 
-		$password=$this->input('server '.$server['user'].'@'.$server['ip'].' password:');
+		$password='haoweilai@2015';
+		//$password=$this->input('server '.$server['user'].'@'.$server['ip'].' password:');
 		$login=ssh2_auth_password($conn,$server['user'],$password);
 		if(!$login){
 			$continue=trim(strtoupper($this->input('unable connect to server '.$server['ip'].',connect (y/n)','yellow')));
@@ -400,23 +491,18 @@ class CodePush
 	}
 
 
-	public function log(){
-		$this->putlog('log');
-		print_r($this->log);
-	}
+	public function log($cmd='all',$num=5){
+		$this->putlog(false);
+		$this->warning("log list:\n");
+		$logs=[];
+		foreach ($this->log as $log) {
+			if($cmd=='all' || $cmd==$log['cmd']){
+				array_push($logs, $log);
+			}
+		}
+		$logs=array_slice($logs, 0-$num);
 
- 
-
-
-
-	/**
-	 * 回滚
-	 * @Author   Woldy
-	 * @DateTime 2016-05-13T10:40:13+0800
-	 * @return   [type]                   [description]
-	 */
-	public function rollBack(){
-
+		print_r($logs);
 	}
 
 
@@ -479,9 +565,12 @@ class CodePush
 	function putlog($cmd='unknown',$logPath="codepush.log.php"){
 		if(file_exists($logPath)){
 			$this->log=require($logPath);
-			$this->taskid=end($this->log)['id']+1;
+			$this->taskid=end($this->log)['taskid']+1;
+			if(!$cmd){
+				return;
+			}
 			array_push($this->log,[
-				'id'=>$this->taskid,
+				'taskid'=>$this->taskid,
 				'time'=>date("Y-m-d H:i:s"),
 				'cmd'=>$cmd,
 				'config'=>json_encode($this->config)
@@ -489,7 +578,7 @@ class CodePush
 		}else{
 			$this->log=[
 				[
-					'id'=>'0',
+					'taskid'=>'0',
 					'time'=>date("Y-m-d H:i:s"),
 					'cmd'=>$cmd,
 					'config'=>json_encode($this->config)
