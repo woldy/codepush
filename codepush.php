@@ -473,8 +473,7 @@ class CodePush
 	 */
 	function login($server){
 		$conn = ssh2_connect($server['ip'],$server['port']); 
-		$password='haoweilai@2015';
-		//$password=$this->input('server '.$server['user'].'@'.$server['ip'].' password:');
+		$password=$this->input('server '.$server['user'].'@'.$server['ip'].' password:');
 		$login=ssh2_auth_password($conn,$server['user'],$password);
 		if(!$login){
 			$continue=trim(strtoupper($this->input('unable connect to server '.$server['ip'].',connect (y/n)','yellow')));
